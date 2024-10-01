@@ -33,6 +33,7 @@ class AtariCNN(BaseFeaturesExtractor):
         )
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
+        # Preprocess the input: convert to float and scale to [0, 1]
         observations = observations.float() / 255.0
         return self.linear(self.cnn(observations))
 
@@ -81,8 +82,7 @@ class MCPAtariPolicy(ActorCriticPolicy):
     def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
         features = self.extract_features(observation)
         latent_pi, _ = self.mlp_extractor(features)
-        distribution = self.action_dist.proba_distribution(latent_pi)
-        return distribution.get_actions(deterministic=deterministic)
+        return self.action_dist.proba_distribution(latent_pi).get_actions(deterministic=deterministic)
 
     def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor):
         features = self.extract_features(obs)
@@ -101,45 +101,8 @@ class MCPAtariPolicy(ActorCriticPolicy):
         return weights.cpu().numpy()
 
     def extract_features(self, obs: th.Tensor) -> th.Tensor:
-        obs = obs.float()
+        """
+        Preprocess the observation if needed and extract features.
+        """
+        obs = obs.float()  # Ensure input is float
         return self.features_extractor(obs)
-
-from stable_baselines3 import PPO
-import matplotlib.pyplot as plt
-
-def main():
-    # Specify render_mode when creating the environment
-    env = gym.make('ALE/MsPacman-v5', render_mode='rgb_array')
-
-    policy_kwargs = dict(
-        features_extractor_class=AtariCNN,
-        features_extractor_kwargs=dict(features_dim=512),
-        num_primitives=8
-    )
-
-    model = PPO(MCPAtariPolicy, env, policy_kwargs=policy_kwargs, verbose=1)
-    model.learn(total_timesteps=100)
-
-    # Test the trained model
-    obs, _ = env.reset()
-    
-    plt.figure(figsize=(8,8))
-    for _ in range(1000):
-        action, _states = model.predict(obs)
-        obs, reward, terminated, truncated, info = env.step(action)
-        
-        # Render the game
-        img = env.render()
-        plt.clf()
-        plt.imshow(img)
-        plt.axis('off')
-        plt.pause(0.01)  # Small pause to update display
-        
-        if terminated or truncated:
-            obs, _ = env.reset()
-
-    env.close()
-    plt.close()
-
-if __name__ == "__main__":
-    main()

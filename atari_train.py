@@ -6,14 +6,16 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack, VecTran
 from stable_baselines3.common.atari_wrappers import AtariWrapper
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
-from stable_baselines3.common.distributions import CategoricalDistribution
 from atari_policies import MCPAtariPolicy, AtariCNN
 from game_configs import get_game_config
-import wandb
 import os
 import json
+import wandb
+import traceback
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+from stable_baselines3.common.callbacks import BaseCallback
 
 class WandbCallback(BaseCallback):
     def __init__(self, eval_env, eval_freq=10000, verbose=0):
@@ -49,20 +51,45 @@ def create_pacman_env(subset_actions=None):
     env = VecFrameStack(env, n_stack=4)
     env = VecTransposeImage(env)
     return env
-    
+
 def evaluate_model(model, env, num_episodes=100, random_score=0, human_score=10000, success_threshold=0.75):
     episode_rewards = []
     episode_lengths = []
     episode_completed = []
 
     for _ in range(num_episodes):
-        obs, _ = env.reset()
+        reset_result = env.reset()
+        obs = reset_result[0] if isinstance(reset_result, tuple) else reset_result
         done = False
         episode_reward = 0
         episode_length = 0
         while not done:
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
+            step_result = env.step(action)
+            obs, reward, terminated, truncated = step_result[:4]
+            info = step_result[4] if len(step_result) > 4 else {}
+            episode_reward += reward
+            episode_length += 1
+            done = terminated or truncated
+        
+        episode_rewards.append(episode_reward)
+        episode_lengths.append(episode_length)
+        episode_completed.append(info.get('flag_get', False))  # Adjust based on the specific Atari game(model, env, num_episodes=100, random_score=0, human_score=10000, success_threshold=0.75):
+    episode_rewards = []
+    episode_lengths = []
+    episode_completed = []
+
+    for _ in range(num_episodes):
+        reset_result = env.reset()
+        obs = reset_result[0] if isinstance(reset_result, tuple) else reset_result
+        done = False
+        episode_reward = 0
+        episode_length = 0
+        while not done:
+            action, _ = model.predict(obs, deterministic=True)
+            step_result = env.step(action)
+            obs, reward, terminated, truncated = step_result[:4]
+            info = step_result[4] if len(step_result) > 4 else {}
             episode_reward += reward
             episode_length += 1
             done = terminated or truncated
@@ -99,7 +126,7 @@ def evaluate_model(model, env, num_episodes=100, random_score=0, human_score=100
         "std_normalized_score": np.std(normalized_scores)
     }
 
-def train_mcp_pacman_subset(subset_actions, total_timesteps=1000000, log_dir="logs/mcp_subset"):
+def train_mcp_pacman_subset(subset_actions, total_timesteps=1000000, log_dir="logs/mcp_subset", game_config=None):
     wandb.init(project="mcp_pacman", name="subset_training", config={
         "subset_actions": subset_actions,
         "total_timesteps": total_timesteps
@@ -121,65 +148,41 @@ def train_mcp_pacman_subset(subset_actions, total_timesteps=1000000, log_dir="lo
     model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     model.save(f"{log_dir}/final_model")
     
-    wandb.finish()
-    return model
-
-def transfer_learning_full_actions(model_dir="logs/mcp_subset", total_timesteps=500000, log_dir="logs/mcp_full"):
-    wandb.init(project="mcp_pacman", name="transfer_learning", config={
-        "model_dir": model_dir,
-        "total_timesteps": total_timesteps
-    })
+    results = evaluate_model(
+        model, 
+        eval_env, 
+        random_score=game_config["random_score"],
+        human_score=game_config["human_score"],
+        success_threshold=game_config["success_threshold"]
+    )
+    wandb.log(results)
     
-    env = create_pacman_env()  # Full action space environment
+    return model, results
+
+def transfer_learning_full_actions(model_path="logs/mcp_subset/final_model", total_timesteps=50000, log_dir="logs/mcp_full", game_config=None):
+    env = create_pacman_env()
     eval_env = create_pacman_env()
 
-    transferred_model = PPO.load(f"{model_dir}/final_model", env=env)
+    transferred_model = PPO.load(model_path, env=env)
     transferred_model.policy.freeze_primitives()
-
-    # Get the new action space size
-    new_action_space_size = env.action_space.n
-
-    # Adjust the action distribution for the new action space
-    transferred_model.policy.action_dist = CategoricalDistribution(new_action_space_size)
-
-    # Create a new output layer for each primitive to match the new action space
-    for i, primitive in enumerate(transferred_model.policy.mlp_extractor.primitives):
-        old_linear = primitive[-1]  # Assume the last layer is the output layer
-        in_features = old_linear.in_features
-        new_linear = torch.nn.Linear(in_features, new_action_space_size)
-        
-        # Initialize the new layer with weights from the old layer
-        with torch.no_grad():
-            new_linear.weight[:old_linear.out_features] = old_linear.weight
-            new_linear.bias[:old_linear.out_features] = old_linear.bias
-        
-        # Replace the old layer with the new one
-        primitive[-1] = new_linear
-
-    # Only set requires_grad=True for the gating function parameters
-    for param in transferred_model.policy.mlp_extractor.gate.parameters():
-        param.requires_grad = True
-
-    # Create a custom learning rate schedule that only updates the gating function
-    def custom_lr_schedule(progress_remaining):
-        return 3e-4  # You can adjust this value as needed
-
-    # Set the learning rate schedule to only affect the gating function
-    transferred_model.policy.optimizer = transferred_model.policy.optimizer_class(
-        [param for param in transferred_model.policy.parameters() if param.requires_grad],
-        lr=custom_lr_schedule(1),
-        **transferred_model.policy.optimizer_kwargs
-    )
 
     wandb_callback = WandbCallback(eval_env)
     
     transferred_model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     transferred_model.save(f"{log_dir}/final_model")
     
-    wandb.finish()
-    return transferred_model
+    results = evaluate_model(
+        transferred_model, 
+        eval_env, 
+        random_score=game_config["random_score"],
+        human_score=game_config["human_score"],
+        success_threshold=game_config["success_threshold"]
+    )
+    wandb.log(results)
+    
+    return transferred_model, results
 
-def train_baseline_ppo(total_timesteps=150000, log_dir="logs/baseline_ppo"):
+def train_baseline_ppo(total_timesteps=150000, log_dir="logs/baseline_ppo", game_config=None):
     env = create_pacman_env()
     eval_env = create_pacman_env()
 
@@ -191,59 +194,48 @@ def train_baseline_ppo(total_timesteps=150000, log_dir="logs/baseline_ppo"):
 
     model.learn(total_timesteps=total_timesteps, callback=eval_callback)
     model.save(f"{log_dir}/final_model")
-    return model
+    
+    results = evaluate_model(
+        env, 
+        eval_env, 
+        random_score=game_config["random_score"],
+        human_score=game_config["human_score"],
+        success_threshold=game_config["success_threshold"]
+    )
+    wandb.log(results)
+    
+    return model, results 
 
 def run_experiment():
     subset_actions = [3, 2, 1]  # LEFT, RIGHT, UP
     results = {}
     
-    game_name = "MsPacman"  # or whatever game you're currently evaluating
+    game_name = "MsPacman"
     game_config = get_game_config(game_name)
 
     try:
         print("Training MCP on subset of actions...")
-        mcp_subset_model = train_mcp_pacman_subset(subset_actions)
-        subset_env = create_pacman_env(subset_actions)
-        results["mcp_subset"] = evaluate_model(
-            mcp_subset_model, 
-            subset_env, 
-            random_score=game_config["random_score"],
-            human_score=game_config["human_score"],
-            success_threshold=game_config["success_threshold"]
-        )
+        mcp_subset_model, results["mcp_subset"] = train_mcp_pacman_subset(subset_actions, game_config=game_config)
         print("MCP Subset Results:", results["mcp_subset"])
     except Exception as e:
         print(f"Error in MCP subset training: {e}")
+        print(traceback.format_exc())  
 
     try:
         print("Performing transfer learning to full action space...")
-        mcp_full_model = transfer_learning_full_actions(model_dir="logs/mcp_subset")
-        full_env = create_pacman_env()
-        results["mcp_full"] = evaluate_model(
-            mcp_full_model, 
-            full_env, 
-            random_score=game_config["random_score"],
-            human_score=game_config["human_score"],
-            success_threshold=game_config["success_threshold"]
-        )
+        mcp_full_model, results["mcp_full"] = transfer_learning_full_actions("logs/mcp_subset/final_model", game_config=game_config)
         print("MCP Full Results:", results["mcp_full"])
     except Exception as e:
         print(f"Error in MCP full action space training: {e}")
+        print(traceback.format_exc())  
 
     try:
         print("Training baseline PPO...")
-        baseline_model = train_baseline_ppo()
-        baseline_env = create_pacman_env()
-        results["baseline_ppo"] = evaluate_model(
-            baseline_model, 
-            baseline_env, 
-            random_score=game_config["random_score"],
-            human_score=game_config["human_score"],
-            success_threshold=game_config["success_threshold"]
-        )
+        baseline_model, results["baseline_ppo"] = train_baseline_ppo(game_config=game_config)
         print("Baseline PPO Results:", results["baseline_ppo"])
     except Exception as e:
         print(f"Error in baseline PPO training: {e}")
+        print(traceback.format_exc())  
 
     # Save results to a JSON file
     with open("experiment_results.json", "w") as f:
