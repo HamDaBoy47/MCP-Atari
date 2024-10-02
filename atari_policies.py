@@ -45,11 +45,13 @@ class MCPAtariPolicy(ActorCriticPolicy):
         lr_schedule: callable,
         num_primitives: int = 8,
         features_dim: int = 512,
+        primitive_action_dim: int = 3,  # dimension of primitive actions
         *args,
         **kwargs,
     ):
         self.num_primitives = num_primitives
         self.features_dim = features_dim
+        self.primitive_action_dim = primitive_action_dim
         super(MCPAtariPolicy, self).__init__(
             observation_space,
             action_space,
@@ -62,14 +64,21 @@ class MCPAtariPolicy(ActorCriticPolicy):
         self.features_extractor = AtariCNN(self.observation_space, self.features_dim)
         self.mlp_extractor = MCPPacmanModel(
             input_dim=self.features_dim,
-            action_dim=self.action_space.n,
+            action_dim=self.primitive_action_dim,
             num_primitives=self.num_primitives
         )
+        self.action_net = nn.Linear(self.primitive_action_dim, self.action_space.n)
+
+    def forward_actor(self, obs: th.Tensor, deterministic: bool = False):
+        features = self.extract_features(obs)
+        primitive_actions = self.mlp_extractor.forward_actor(features)
+        return self.action_net(primitive_actions)
 
     def freeze_primitives(self):
-        for primitive in self.mlp_extractor.primitives:
-            for param in primitive.parameters():
-                param.requires_grad = False
+        for param in self.mlp_extractor.parameters():
+            param.requires_grad = False
+        for param in self.features_extractor.parameters():
+            param.requires_grad = False
 
     def forward(self, obs: th.Tensor, deterministic: bool = False):
         features = self.extract_features(obs)
