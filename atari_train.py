@@ -262,9 +262,11 @@ def run_experiment(args):
             args.features_dim, args.primitive_action_dim
         )
         print("MCP Subset Results:", results["mcp_subset"])
+        wandb.finish() 
     except Exception as e:
         print(f"Error in MCP subset training: {e}")
-        print(traceback.format_exc())  
+        print(traceback.format_exc())
+        wandb.finish()   
 
     env = create_pacman_env()
     eval_env = create_pacman_env()
@@ -277,9 +279,11 @@ def run_experiment(args):
             args.num_primitives, args.features_dim, args.primitive_action_dim
         )
         print("MCP Full Results:", results["mcp_full"])
+        wandb.finish() 
     except Exception as e:
         print(f"Error in MCP full action space training: {e}")
         print(traceback.format_exc())  
+        wandb.finish() 
 
     try:
         print("Training baseline PPO...")
@@ -288,9 +292,11 @@ def run_experiment(args):
             f"{log_dir}/baseline_ppo", game_config
         )
         print("Baseline PPO Results:", results["baseline_ppo"])
+        wandb.finish() 
     except Exception as e:
         print(f"Error in baseline PPO training: {e}")
         print(traceback.format_exc())
+        wandb.finish() 
 
     # Save results to a JSON file
     with open(f"{log_dir}/experiment_results.json", "w") as f:
@@ -302,9 +308,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run MCP experiments on Atari games")
     parser.add_argument("--game_name", type=str, default="MsPacman", help="Name of the Atari game")
     parser.add_argument("--subset_actions", type=int, nargs="+", default=[3, 2, 1], help="Subset of actions for initial training")
-    parser.add_argument("--mcp_subset_timesteps", type=int, default=100000, help="Total timesteps for MCP subset training")
-    parser.add_argument("--mcp_full_timesteps", type=int, default=50000, help="Total timesteps for MCP full action space training")
-    parser.add_argument("--baseline_ppo_timesteps", type=int, default=100000, help="Total timesteps for baseline PPO training")
+    parser.add_argument("--mcp_subset_timesteps", type=int, default=1000000, help="Total timesteps for MCP subset training")
+    parser.add_argument("--mcp_full_timesteps", type=int, default=500000, help="Total timesteps for MCP full action space training")
+    parser.add_argument("--baseline_ppo_timesteps", type=int, default=1000000, help="Total timesteps for baseline PPO training")
     parser.add_argument("--num_primitives", type=int, default=8, help="Number of primitives in the MCP model")
     parser.add_argument("--features_dim", type=int, default=512, help="Dimension of the feature extractor output")
     parser.add_argument("--primitive_action_dim", type=int, default=3, help="Dimension of primitive actions")
