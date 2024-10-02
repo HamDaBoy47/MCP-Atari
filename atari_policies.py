@@ -75,10 +75,24 @@ class MCPAtariPolicy(ActorCriticPolicy):
         return self.action_net(primitive_actions)
 
     def freeze_primitives(self):
-        for param in self.mlp_extractor.parameters():
-            param.requires_grad = False
+        def zero_grad_hook(grad):
+            return grad * 0
+        
+        # Freeze feature extractor
         for param in self.features_extractor.parameters():
-            param.requires_grad = False
+            param.register_hook(zero_grad_hook)
+        
+        # Freeze primitives in mlp_extractor
+        for primitive in self.mlp_extractor.primitives:
+            for param in primitive.parameters():
+                param.register_hook(zero_grad_hook)
+        
+        # Ensure other parts remain trainable
+        for param in self.mlp_extractor.gate.parameters():
+            param.requires_grad = True
+        
+        for param in self.action_net.parameters():
+            param.requires_grad = True
 
     def forward(self, obs: th.Tensor, deterministic: bool = False):
         features = self.extract_features(obs)

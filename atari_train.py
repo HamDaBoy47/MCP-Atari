@@ -189,8 +189,19 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
     transferred_model.policy.features_extractor.load_state_dict(pre_trained_model.policy.features_extractor.state_dict())
     transferred_model.policy.mlp_extractor.load_state_dict(pre_trained_model.policy.mlp_extractor.state_dict())
     
+    # Initialize the action_net weights
+    torch.nn.init.orthogonal_(transferred_model.policy.action_net.weight, gain=0.01)
+    torch.nn.init.constant_(transferred_model.policy.action_net.bias, 0.0)
+    
     # Freeze the primitives
     transferred_model.policy.freeze_primitives()
+    
+    # Ensure the optimizer is recreated with the correct parameters
+    transferred_model.policy.optimizer = transferred_model.policy.optimizer_class(
+        transferred_model.policy.parameters(),
+        lr=transferred_model.learning_rate,
+        **transferred_model.policy.optimizer_kwargs
+    )
 
     wandb_callback = WandbCallback(eval_env)
     
