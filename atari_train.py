@@ -32,12 +32,16 @@ class WandbCallback(BaseCallback):
         super(WandbCallback, self).__init__(verbose)
         self.eval_env = eval_env
         self.eval_freq = eval_freq
+        self.n_calls = 0
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
             metrics = evaluate_model(self.model, self.eval_env)
             wandb.log(metrics, step=self.n_calls)
         return True
+
+    def reset(self):
+        self.n_calls = 0 
     
 class PacmanSubsetActionWrapper(gym.Wrapper):
     def __init__(self, env, subset_actions):
@@ -204,6 +208,7 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
     )
 
     wandb_callback = WandbCallback(eval_env)
+    wandb_callback.reset()
     
     transferred_model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     transferred_model.save(f"{log_dir}/final_model")
