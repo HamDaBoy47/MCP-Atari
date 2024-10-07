@@ -3,15 +3,44 @@ ATARI_CONFIGS = {
         "random_score": 307.3,
         "human_score": 15693,
         "success_threshold": 0.75,
-        "completion_metric": None  # Ms. Pacman doesn't have a clear "completion" state
+        "completion_metric": None
     },
     "Breakout": {
         "random_score": 1.7,
         "human_score": 30.5,
         "success_threshold": 0.75,
-        "completion_metric": "lives"  # Consider an episode complete when all lives are lost
+        "completion_metric": "lives"
     },
-    # Add more games as needed
+    "Gravitar": {
+        "random_score": 173,
+        "human_score": 3351,
+        "success_threshold": 0.75,
+        "completion_metric": "lives"
+    },
+    "MarioBros": {
+        "random_score": 308,
+        "human_score": 28800,
+        "success_threshold": 0.75,
+        "completion_metric": "lives"
+    },
+    "DonkeyKong": {
+        "random_score": 475,
+        "human_score": 33000,
+        "success_threshold": 0.75,
+        "completion_metric": "lives"
+    },
+    "Asteroids": {
+        "random_score": 719,
+        "human_score": 13157,
+        "success_threshold": 0.75,
+        "completion_metric": "lives"
+    },
+    "Seaquest": {
+        "random_score": 68,
+        "human_score": 20182,
+        "success_threshold": 0.75,
+        "completion_metric": "lives"
+    }
 }
 
 def get_game_config(game_name):
