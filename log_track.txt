@@ -1,0 +1,9 @@
+ JOBID PARTITION     NAME     USER ST       TIME  NODES NODELIST(REASON)
+124639  stampede      MCP hdadabho  R    9:25:37      1 mscluster5          baseline
+124662  stampede      MCP hdadabho  R    7:18:23      1 mscluster7          learning rate tweaking
+124663  stampede      MCP hdadabho  R    7:16:03      1 mscluster9          video
+124664  stampede      MCP hdadabho  R    7:15:10      1 mscluster18         video
+124668  stampede      MCP hdadabho  R    6:32:11      1 mscluster8          Gravitar
+124707  stampede      MCP hdadabho  R      11:41      1 mscluster17         default lr + no video
+124708  stampede      MCP hdadabho  R      10:41      1 mscluster20         full action space + 8 prims
+124715  stampede      MCP hdadabho  R       0:05      1 mscluster21         full action space + 4 prims
