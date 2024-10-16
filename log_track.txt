@@ -7,3 +7,5 @@
 124707  stampede      MCP hdadabho  R      11:41      1 mscluster17         default lr + no video
 124708  stampede      MCP hdadabho  R      10:41      1 mscluster20         full action space + 8 prims
 124715  stampede      MCP hdadabho  R       0:05      1 mscluster21         full action space + 4 prims
+124966  stampede      MCP hdadabho  R      34:56      1 mscluster5          fixed video
+124968  stampede      MCP hdadabho  R       2:47      1 mscluster21         alternate game transfer

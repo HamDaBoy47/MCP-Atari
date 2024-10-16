@@ -236,7 +236,7 @@ def evaluate_model(model, env, num_episodes=100, random_score=0, human_score=100
     # Close the plot to free memory
     plt.close(fig)
 
-    return metrics, action_distribution
+    return metrics
 
 def train_mcp_game_subset(env, eval_env, game_name, subset_actions, total_timesteps, log_dir, vid_dir, game_config, num_primitives, features_dim, primitive_action_dim, learning_rate):
     wandb.init(project="mcp_atari", name=f"pre-training_{game_name}_{log_dir}", config={
@@ -260,7 +260,7 @@ def train_mcp_game_subset(env, eval_env, game_name, subset_actions, total_timest
     model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     model.save(f"{log_dir}/final_model")
     
-    results, pre_training_action_dist = evaluate_model(
+    results = evaluate_model(
         model, 
         eval_env, 
         random_score=game_config["random_score"],
@@ -323,7 +323,7 @@ def transfer_learning_full_actions(env, eval_env, model_path, game_name, total_t
     transferred_model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     transferred_model.save(f"{log_dir}/final_model")
     
-    results, transfer_action_dist = evaluate_model(
+    results = evaluate_model(
         transferred_model, 
         eval_env, 
         random_score=game_config["random_score"],
@@ -354,7 +354,7 @@ def train_baseline_ppo(env, eval_env, total_timesteps, log_dir, game_config):
     model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     model.save(f"{log_dir}/final_model")
     
-    results, baseline_action_dist = evaluate_model(
+    results = evaluate_model(
         model,
         eval_env,
         random_score=game_config["random_score"],
