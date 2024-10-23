@@ -42,7 +42,7 @@ class WandbCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
-            metrics, _ = evaluate_model(self.model, self.eval_env)
+            metrics = evaluate_model(self.model, self.eval_env)
             wandb.log(metrics, step=self.n_calls)
         return True
 
@@ -271,11 +271,11 @@ def train_mcp_pacman_subset(env, eval_env, subset_actions, total_timesteps, log_
     # wandb.log({"pre_training_action_distribution": pre_training_action_dist.tolist()})
     
     # Record and upload pre-training gameplay
-    pre_training_video_folder = f"{vid_dir}/pre_training_videos"
-    os.makedirs(pre_training_video_folder, exist_ok=True)
-    pre_training_video_paths = record_gameplay(model, args.game_name, pre_training_video_folder, subset_actions)
-    for i, video_path in enumerate(pre_training_video_paths):
-        wandb.log({f"pre_training_gameplay_{i}": wandb.Video(video_path)})
+    # pre_training_video_folder = f"{vid_dir}/pre_training_videos"
+    # os.makedirs(pre_training_video_folder, exist_ok=True)
+    # pre_training_video_paths = record_gameplay(model, args.game_name, pre_training_video_folder, subset_actions)
+    # for i, video_path in enumerate(pre_training_video_paths):
+    #     wandb.log({f"pre_training_gameplay_{i}": wandb.Video(video_path)})
     
     return model, results
 
@@ -334,11 +334,11 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
     # wandb.log({"transfer_action_distribution": transfer_action_dist.tolist()})
     
     # Record and upload transfer learning gameplay
-    transfer_video_folder = f"{vid_dir}/transfer_videos"
-    os.makedirs(transfer_video_folder, exist_ok=True)
-    transfer_video_paths = record_gameplay(transferred_model, args.game_name, transfer_video_folder)
-    for i, video_path in enumerate(transfer_video_paths):
-        wandb.log({f"transfer_gameplay_{i}": wandb.Video(video_path)})
+    # transfer_video_folder = f"{vid_dir}/transfer_videos"
+    # os.makedirs(transfer_video_folder, exist_ok=True)
+    # transfer_video_paths = record_gameplay(transferred_model, args.game_name, transfer_video_folder)
+    # for i, video_path in enumerate(transfer_video_paths):
+    #     wandb.log({f"transfer_gameplay_{i}": wandb.Video(video_path)})
     
     return transferred_model, results
 
@@ -379,7 +379,7 @@ def run_experiment(args):
     log_dir = f"logs/{args.game_name}_primitives{args.num_primitives}_{timestamp}"
     vid_dir = f"/gluster/hdadabhoy/{args.game_name}_primitives{args.num_primitives}_{timestamp}"
     os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(vid_dir, exist_ok=True)
+    # os.makedirs(vid_dir, exist_ok=True)
 
     env = create_atari_env(args.game_name, args.subset_actions)
     eval_env = create_atari_env(args.game_name, args.subset_actions)

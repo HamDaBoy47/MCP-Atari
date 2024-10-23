@@ -3,7 +3,6 @@ import numpy as np
 import torch as th
 from torch import nn
 from stable_baselines3.common.policies import ActorCriticPolicy
-from stable_baselines3.common.distributions import CategoricalDistribution
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from atari_models import MCPPacmanModel
 
@@ -37,6 +36,7 @@ class AtariCNN(BaseFeaturesExtractor):
         observations = observations.float() / 255.0
         return self.linear(self.cnn(observations))
 
+# -----------------------------------------WORKING POLICY--------------------------------------------------
 class MCPAtariPolicy(ActorCriticPolicy):
     def __init__(
         self,
@@ -129,3 +129,4 @@ class MCPAtariPolicy(ActorCriticPolicy):
         """
         obs = obs.float()  # Ensure input is float
         return self.features_extractor(obs)
+
