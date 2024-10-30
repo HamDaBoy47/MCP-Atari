@@ -5,8 +5,9 @@ from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from atari_policies import MCPAtariPolicy, AtariCNN
 from game_configs import get_game_config
-from collections import deque
+from collections import deque, defaultdict
 import matplotlib.pyplot as plt
+from gymnasium.wrappers import RecordVideo
 import gymnasium as gym
 import numpy as np
 import traceback
@@ -48,7 +49,7 @@ class WandbCallback(BaseCallback):
     def reset(self):
         self.n_calls = 0
     
-class PacmanSubsetActionWrapper(gym.Wrapper):
+class SubsetActionWrapper(gym.Wrapper):
     def __init__(self, env, subset_actions):
         super().__init__(env)
         self.subset_actions = subset_actions
@@ -57,6 +58,29 @@ class PacmanSubsetActionWrapper(gym.Wrapper):
     def step(self, action):
         full_action = self.subset_actions[action]
         return self.env.step(full_action)
+    
+def record_gameplay(model, game_name, video_folder, subset_actions=None, num_episodes=5, video_length=1500):
+    # Create a new environment for recording
+    record_env = create_atari_env(game_name, subset_actions, video_folder)
+
+    for episode in range(num_episodes):
+        obs = record_env.reset()
+        done = False
+        step = 0
+        total_reward = 0
+        while not done and step < video_length:
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, done, info = record_env.step(action)
+            total_reward += reward[0]  # reward is now a numpy array
+            step += 1
+        
+        print(f"Episode {episode + 1} finished. Total reward: {total_reward}, Steps: {step}")
+
+    record_env.close()
+
+    # Get the paths of the recorded videos
+    video_paths = [os.path.join(video_folder, f) for f in os.listdir(video_folder) if f.endswith(".mp4")]
+    return video_paths
     
 def plot_action_distributions(pre_training_dist, transfer_dist):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
@@ -89,17 +113,14 @@ def debug_step(env, obs, action, reward, next_obs, done, info):
     if np.isnan(reward) or np.isinf(reward):
         logging.warning("NaN or Inf values detected in reward!")
 
-def create_pacman_env(subset_actions=None):
+def create_atari_env(game_name, subset_actions=None, video_folder=None):
     def make_env():
-        env = gym.make("ALE/MsPacman-v5", render_mode="rgb_array", full_action_space=True)
+        env = gym.make(f"ALE/{game_name}-v5", render_mode="rgb_array")
         env = AtariWrapper(env)
         if subset_actions is not None:
-            env = PacmanSubsetActionWrapper(env, subset_actions)
-        
-        # Add environment checks
-        # logging.info(f"Action space: {env.action_space}")
-        # logging.info(f"Observation space: {env.observation_space}")
-        
+            env = SubsetActionWrapper(env, subset_actions)
+        if video_folder:
+            env = gym.wrappers.RecordVideo(env, video_folder, episode_trigger=lambda x: True)
         return env
     
     env = DummyVecEnv([make_env])
@@ -139,6 +160,11 @@ def evaluate_model(model, env, num_episodes=100, random_score=0, human_score=100
         
         # Detailed logging for each episode
         logging.info(f"Episode {i+1} finished: Total Reward: {episode_reward} Episode Length: {episode_length}")
+        # logging.info(f"  Total Reward: {episode_reward}")
+        # logging.info(f"  Episode Length: {episode_length}")
+        # logging.info(f"  Action Sequence: {episode_actions}")
+        # logging.info(f"  Reward Sequence: {episode_rewards}")
+        # logging.info(f"  Action Distribution: {np.bincount(episode_actions, minlength=env.action_space.n)}")
         
         episode_rewards.append(episode_reward)
         episode_lengths.append(episode_length)
@@ -212,36 +238,27 @@ def evaluate_model(model, env, num_episodes=100, random_score=0, human_score=100
 
     return metrics
 
-def train_mcp_atari_results_subset(env, eval_env, subset_actions, total_timesteps, log_dir, game_config, num_primitives, features_dim, learning_rate):
+def train_mcp_pacman_subset(env, eval_env, subset_actions, total_timesteps, log_dir, vid_dir, game_config, num_primitives, features_dim, primitive_action_dim, learning_rate):
     wandb.init(project="mcp_atari_results", name=f"pre-training_{log_dir}", config={
         "subset_actions": subset_actions,
         "total_timesteps": total_timesteps,
-        "learning_rate": learning_rate,
-        "num_primitives": num_primitives
+        "learning_rate": learning_rate
     })
     
     policy_kwargs = dict(
         features_extractor_class=AtariCNN,
         features_extractor_kwargs=dict(features_dim=features_dim),
         num_primitives=num_primitives,
+        primitive_action_dim=primitive_action_dim
     )
 
-    model = PPO(
-        MCPAtariPolicy, 
-        env, 
-        policy_kwargs=policy_kwargs,
-        verbose=1,
-        tensorboard_log=log_dir,
-        learning_rate=learning_rate,
-        ent_coef=0.01
-    )
+    model = PPO(MCPAtariPolicy, env, policy_kwargs=policy_kwargs, verbose=1, tensorboard_log=log_dir, learning_rate=learning_rate)
     
     wandb_callback = WandbCallback(eval_env)
     
     model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     model.save(f"{log_dir}/final_model")
     
-    # Evaluate the model and get results
     results = evaluate_model(
         model, 
         eval_env, 
@@ -250,12 +267,19 @@ def train_mcp_atari_results_subset(env, eval_env, subset_actions, total_timestep
         success_threshold=game_config["success_threshold"],
         is_transfer=False
     )
-    
     wandb.log(results)
+    # wandb.log({"pre_training_action_distribution": pre_training_action_dist.tolist()})
+    
+    # Record and upload pre-training gameplay
+    # pre_training_video_folder = f"{vid_dir}/pre_training_videos"
+    # os.makedirs(pre_training_video_folder, exist_ok=True)
+    # pre_training_video_paths = record_gameplay(model, args.game_name, pre_training_video_folder, subset_actions)
+    # for i, video_path in enumerate(pre_training_video_paths):
+    #     wandb.log({f"pre_training_gameplay_{i}": wandb.Video(video_path)})
     
     return model, results
 
-def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, log_dir, game_config, num_primitives, features_dim, learning_rate):
+def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, log_dir, vid_dir, game_config, num_primitives, features_dim, primitive_action_dim, learning_rate):
     wandb.init(project="mcp_atari_results", name=f"transfer_{log_dir}", config={
         "total_timesteps": total_timesteps,
         "learning_rate": learning_rate
@@ -264,34 +288,28 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
     # Load the pre-trained model
     pre_trained_model = PPO.load(model_path)
     
-    # Create new model with the full action space
+    # Create a new model with the full action space
     policy_kwargs = dict(
         features_extractor_class=AtariCNN,
         features_extractor_kwargs=dict(features_dim=features_dim),
         num_primitives=num_primitives,
+        primitive_action_dim=primitive_action_dim
     )
     
-    transferred_model = PPO(
-        MCPAtariPolicy,
-        env,
-        policy_kwargs=policy_kwargs,
-        verbose=1,
-        tensorboard_log=log_dir,
-        learning_rate=learning_rate
-    )
+    transferred_model = PPO(MCPAtariPolicy, env, policy_kwargs=policy_kwargs, verbose=1, tensorboard_log=log_dir, learning_rate=learning_rate)
+            
+    # Copy the pre-trained weights
+    transferred_model.policy.features_extractor.load_state_dict(pre_trained_model.policy.features_extractor.state_dict())
+    transferred_model.policy.mlp_extractor.load_state_dict(pre_trained_model.policy.mlp_extractor.state_dict())
     
-    # Copy pre-trained weights
-    transferred_model.policy.features_extractor.load_state_dict(
-        pre_trained_model.policy.features_extractor.state_dict()
-    )
-    transferred_model.policy.mlp_extractor.load_state_dict(
-        pre_trained_model.policy.mlp_extractor.state_dict()
-    )
+    # Initialize the action_net weights
+    torch.nn.init.orthogonal_(transferred_model.policy.action_net.weight, gain=0.01)
+    torch.nn.init.constant_(transferred_model.policy.action_net.bias, 0.0)
     
-    # Freeze primitives but allow gate to adapt
+    # Freeze the primitives
     transferred_model.policy.freeze_primitives()
     
-    # Ensure optimizer is recreated with correct parameters
+    # Ensure the optimizer is recreated with the correct parameters
     transferred_model.policy.optimizer = transferred_model.policy.optimizer_class(
         transferred_model.policy.parameters(),
         lr=transferred_model.learning_rate,
@@ -304,7 +322,6 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
     transferred_model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     transferred_model.save(f"{log_dir}/final_model")
     
-    # Evaluate the transferred model
     results = evaluate_model(
         transferred_model, 
         eval_env, 
@@ -313,8 +330,15 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
         success_threshold=game_config["success_threshold"],
         is_transfer=True
     )
-    
     wandb.log(results)
+    # wandb.log({"transfer_action_distribution": transfer_action_dist.tolist()})
+    
+    # Record and upload transfer learning gameplay
+    # transfer_video_folder = f"{vid_dir}/transfer_videos"
+    # os.makedirs(transfer_video_folder, exist_ok=True)
+    # transfer_video_paths = record_gameplay(transferred_model, args.game_name, transfer_video_folder)
+    # for i, video_path in enumerate(transfer_video_paths):
+    #     wandb.log({f"transfer_gameplay_{i}": wandb.Video(video_path)})
     
     return transferred_model, results
 
@@ -353,17 +377,19 @@ def run_experiment(args):
 
     # Create the log directory with game name, number of primitives, and timestamp
     log_dir = f"logs/{args.game_name}_primitives{args.num_primitives}_{timestamp}"
+    vid_dir = f"/gluster/hdadabhoy/{args.game_name}_primitives{args.num_primitives}_{timestamp}"
     os.makedirs(log_dir, exist_ok=True)
+    # os.makedirs(vid_dir, exist_ok=True)
 
-    env = create_pacman_env(args.subset_actions)
-    eval_env = create_pacman_env(args.subset_actions)
+    env = create_atari_env(args.game_name, args.subset_actions)
+    eval_env = create_atari_env(args.game_name, args.subset_actions)
 
     try:
         print("Training MCP on subset of actions...")
-        mcp_subset_model, results["mcp_subset"] = train_mcp_atari_results_subset(
+        mcp_subset_model, results["mcp_subset"] = train_mcp_pacman_subset(
             env, eval_env, args.subset_actions, args.mcp_subset_timesteps, 
-            f"{log_dir}/mcp_subset", game_config, args.num_primitives, 
-            args.features_dim, args.pre_training_lr
+            f"{log_dir}/mcp_subset", f"{vid_dir}/mcp_subset", game_config, args.num_primitives, 
+            args.features_dim, args.primitive_action_dim, args.pre_training_lr
         )
         print("MCP Subset Results:", results["mcp_subset"])
         wandb.finish() 
@@ -372,15 +398,15 @@ def run_experiment(args):
         print(traceback.format_exc())
         wandb.finish()   
 
-    env = create_pacman_env()
-    eval_env = create_pacman_env()
+    env = create_atari_env(args.game_name, args.subset_actions)
+    eval_env = create_atari_env(args.game_name, args.subset_actions)
 
     try:
         print("Performing transfer learning to full action space...")
         mcp_full_model, results["mcp_full"] = transfer_learning_full_actions(
             env, eval_env, f"{log_dir}/mcp_subset/final_model", 
-            args.mcp_full_timesteps, f"{log_dir}/mcp_full", game_config, 
-            args.num_primitives, args.features_dim,
+            args.mcp_full_timesteps, f"{log_dir}/mcp_full", f"{vid_dir}/mcp_full",  game_config, 
+            args.num_primitives, args.features_dim, args.primitive_action_dim,
             args.transfer_learning_lr
         )
         print("MCP Full Results:", results["mcp_full"])
@@ -406,11 +432,6 @@ def run_experiment(args):
     # Save results to a JSON file
     with open(f"{log_dir}/experiment_results.json", "w") as f:
         json.dump(results, f, indent=4, cls=NumpyEncoder)
-        
-    # Plot and log action distribution comparison
-    action_dist_fig = plot_action_distributions(results["mcp_subset"]["action_distribution"], results["mcp_full"]["action_distribution"])
-    wandb.log({"action_distribution_comparison": wandb.Image(action_dist_fig)})
-    plt.close(action_dist_fig)
 
     print(f"Experiment completed. Results saved to {log_dir}/experiment_results.json")
 
@@ -422,10 +443,10 @@ if __name__ == "__main__":
     parser.add_argument("--mcp_full_timesteps", type=int, default=500000, help="Total timesteps for MCP full action space training")
     parser.add_argument("--baseline_ppo_timesteps", type=int, default=1000000, help="Total timesteps for baseline PPO training")
     parser.add_argument("--num_primitives", type=int, default=8, help="Number of primitives in the MCP model")
-    parser.add_argument("--pre_training_lr", type=float, default=3e-3, help="Learning rate for pre-training")
-    parser.add_argument("--transfer_learning_lr", type=float, default=1e-4, help="Learning rate for transfer learning")
+    parser.add_argument("--pre_training_lr", type=float, default=3e-4, help="Learning rate for pre-training")
+    parser.add_argument("--transfer_learning_lr", type=float, default=3e-4, help="Learning rate for transfer learning")
     parser.add_argument("--features_dim", type=int, default=512, help="Dimension of the feature extractor output")
-    parser.add_argument("--primitive_action_dim", type=int, default=3, help="Dimension of primitive actions")
+    parser.add_argument("--primitive_action_dim", type=int, default=4, help="Dimension of primitive actions")
     parser.add_argument("--eval_freq", type=int, default=10000, help="Frequency of evaluation during training")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
 

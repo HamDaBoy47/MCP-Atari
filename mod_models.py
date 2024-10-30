@@ -1,4 +1,3 @@
-# atari_models.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,10 +7,8 @@ class MCPPacmanModel(nn.Module):
     def __init__(self, input_dim, action_dim, num_primitives=8, hidden_dim=512):
         super(MCPPacmanModel, self).__init__()
         
-        self.latent_dim_pi = action_dim
-        self.latent_dim_vf = 1
-        self.action_dim = action_dim
-        self.num_primitives = num_primitives
+        self.latent_dim_pi = action_dim  # Add this line
+        self.latent_dim_vf = 1  # Add this line
         
         self.feature_extractor = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -20,7 +17,6 @@ class MCPPacmanModel(nn.Module):
             nn.ReLU()
         )
         
-        # Gate network outputs weights for combining primitives
         self.gate = nn.Sequential(
             nn.Linear(hidden_dim, 256),
             nn.ReLU(),
@@ -28,12 +24,11 @@ class MCPPacmanModel(nn.Module):
             nn.Sigmoid()
         )
         
-        # Each primitive outputs logits for discrete actions
         self.primitives = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(hidden_dim, 256),
                 nn.ReLU(),
-                nn.Linear(256, action_dim)  # Logits for discrete actions
+                nn.Linear(256, action_dim)
             ) for _ in range(num_primitives)
         ])
         
@@ -42,24 +37,13 @@ class MCPPacmanModel(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 1)
         )
-        
-        for primitive in self.primitives:
-            # Initialize the final layer with smaller weights to start
-            nn.init.orthogonal_(primitive[-1].weight, gain=0.01)
 
     def forward_actor(self, features):
-        weights = self.gate(features)  # Shape: (batch_size, num_primitives)
-        weights = weights.unsqueeze(-1)  # Shape: (batch_size, num_primitives, 1)
+        weights = self.gate(features)
         
-        # Get primitive logits
-        primitive_logits = torch.stack([
-            primitive(features) for primitive in self.primitives
-        ], dim=1)  # Shape: (batch_size, num_primitives, action_dim)
+        primitive_outputs = torch.stack([primitive(features) for primitive in self.primitives], dim=1)
+        composed_output = (weights.unsqueeze(-1) * primitive_outputs).sum(dim=1)
         
-        # Multiplicative composition first
-        composed_output = (weights * primitive_logits).sum(dim=1)  # Shape: (batch_size, action_dim)
-        
-        # Then convert to probabilities
         return composed_output
 
     def forward_critic(self, features):
