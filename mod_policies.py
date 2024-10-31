@@ -4,7 +4,7 @@ import torch as th
 from torch import nn
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from atari_models import MCPPacmanModel
+from mod_models import MCPPacmanModel
 
 class AtariCNN(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 512):

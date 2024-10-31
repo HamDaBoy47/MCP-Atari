@@ -3,7 +3,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack, VecTran
 from stable_baselines3.common.atari_wrappers import AtariWrapper
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
-from atari_policies import MCPAtariPolicy, AtariCNN
+from mod_policies import MCPAtariPolicy, AtariCNN
 from game_configs import get_game_config
 from collections import deque, defaultdict
 import matplotlib.pyplot as plt
@@ -446,7 +446,7 @@ if __name__ == "__main__":
     parser.add_argument("--pre_training_lr", type=float, default=3e-4, help="Learning rate for pre-training")
     parser.add_argument("--transfer_learning_lr", type=float, default=3e-4, help="Learning rate for transfer learning")
     parser.add_argument("--features_dim", type=int, default=512, help="Dimension of the feature extractor output")
-    parser.add_argument("--primitive_action_dim", type=int, default=4, help="Dimension of primitive actions")
+    parser.add_argument("--primitive_action_dim", type=int, default=9, help="Dimension of primitive actions")
     parser.add_argument("--eval_freq", type=int, default=10000, help="Frequency of evaluation during training")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
 
