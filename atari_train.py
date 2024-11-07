@@ -89,17 +89,13 @@ def debug_step(env, obs, action, reward, next_obs, done, info):
     if np.isnan(reward) or np.isinf(reward):
         logging.warning("NaN or Inf values detected in reward!")
 
-def create_pacman_env(subset_actions=None):
+def create_atari_env(game_name, seed=None):
+    """Create Atari environment with full action space"""
     def make_env():
-        env = gym.make("ALE/MsPacman-v5", render_mode="rgb_array", full_action_space=True)
+        env = gym.make(f"ALE/{game_name}-v5", render_mode="rgb_array", full_action_space=True)
         env = AtariWrapper(env)
-        if subset_actions is not None:
-            env = PacmanSubsetActionWrapper(env, subset_actions)
-        
-        # Add environment checks
-        # logging.info(f"Action space: {env.action_space}")
-        # logging.info(f"Observation space: {env.observation_space}")
-        
+        if seed is not None:
+            env.seed(seed)
         return env
     
     env = DummyVecEnv([make_env])
@@ -195,29 +191,17 @@ def evaluate_model(model, env, num_episodes=100, random_score=0, human_score=100
     for i, prob in enumerate(action_distribution):
         metrics[f"action_{i}_prob"] = prob
 
-    # Create a bar plot of action distribution
-    # fig, ax = plt.subplots()
-    # ax.bar(range(len(action_distribution)), action_distribution)
-    # ax.set_xlabel('Action')
-    # ax.set_ylabel('Probability')
-    # ax.set_title('Action Distribution')
-    
-    # Log the plot to wandb
-    # metrics['action_distribution_plot'] = wandb.Image(fig)
-
     wandb.log(metrics)
-
-    # Close the plot to free memory
-    # plt.close(fig)
 
     return metrics
 
-def train_mcp_atari_results_subset(env, eval_env, subset_actions, total_timesteps, log_dir, game_config, num_primitives, features_dim, learning_rate):
-    wandb.init(project="mcp_atari_results", name=f"pre-training_{log_dir}", config={
-        "subset_actions": subset_actions,
+def train_mcp_pre_training(env, eval_env, total_timesteps, log_dir, game_config, num_primitives, features_dim, learning_rate):
+    """Pre-training phase with full action space"""
+    wandb.init(project="mcp_atari_final", name=f"pre-training_{log_dir}", config={
         "total_timesteps": total_timesteps,
         "learning_rate": learning_rate,
-        "num_primitives": num_primitives
+        "num_primitives": num_primitives,
+        "features_dim": features_dim
     })
     
     policy_kwargs = dict(
@@ -233,7 +217,7 @@ def train_mcp_atari_results_subset(env, eval_env, subset_actions, total_timestep
         verbose=1,
         tensorboard_log=log_dir,
         learning_rate=learning_rate,
-        ent_coef=0.01
+        ent_coef=0.01  # Encourage exploration
     )
     
     wandb_callback = WandbCallback(eval_env)
@@ -241,22 +225,22 @@ def train_mcp_atari_results_subset(env, eval_env, subset_actions, total_timestep
     model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     model.save(f"{log_dir}/final_model")
     
-    # Evaluate the model and get results
+    # Evaluate and log primitive specialization
     results = evaluate_model(
         model, 
         eval_env, 
         random_score=game_config["random_score"],
         human_score=game_config["human_score"],
-        success_threshold=game_config["success_threshold"],
-        is_transfer=False
+        success_threshold=game_config["success_threshold"]
     )
     
     wandb.log(results)
     
     return model, results
 
-def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, log_dir, game_config, num_primitives, features_dim, learning_rate):
-    wandb.init(project="mcp_atari_results", name=f"transfer_{log_dir}", config={
+def transfer_learning_new_task(env, eval_env, model_path, total_timesteps, log_dir, game_config, num_primitives, features_dim, learning_rate):
+    """Transfer learning to new task while maintaining primitive structure"""
+    wandb.init(project="mcp_atari_final", name=f"transfer_{log_dir}", config={
         "total_timesteps": total_timesteps,
         "learning_rate": learning_rate
     })
@@ -264,7 +248,7 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
     # Load the pre-trained model
     pre_trained_model = PPO.load(model_path)
     
-    # Create new model with the full action space
+    # Create new model for transfer task
     policy_kwargs = dict(
         features_extractor_class=AtariCNN,
         features_extractor_kwargs=dict(features_dim=features_dim),
@@ -291,27 +275,24 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
     # Freeze primitives but allow gate to adapt
     transferred_model.policy.freeze_primitives()
     
-    # Ensure optimizer is recreated with correct parameters
+    # Recreate optimizer with correct parameters
     transferred_model.policy.optimizer = transferred_model.policy.optimizer_class(
-        transferred_model.policy.parameters(),
+        [p for p in transferred_model.policy.parameters() if p.requires_grad],
         lr=transferred_model.learning_rate,
         **transferred_model.policy.optimizer_kwargs
     )
 
     wandb_callback = WandbCallback(eval_env)
-    wandb_callback.reset()
     
     transferred_model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     transferred_model.save(f"{log_dir}/final_model")
     
-    # Evaluate the transferred model
     results = evaluate_model(
         transferred_model, 
         eval_env, 
         random_score=game_config["random_score"],
         human_score=game_config["human_score"],
-        success_threshold=game_config["success_threshold"],
-        is_transfer=True
+        success_threshold=game_config["success_threshold"]
     )
     
     wandb.log(results)
@@ -319,7 +300,7 @@ def transfer_learning_full_actions(env, eval_env, model_path, total_timesteps, l
     return transferred_model, results
 
 def train_baseline_ppo(env, eval_env, total_timesteps, log_dir, game_config):
-    wandb.init(project="mcp_atari_results", name=f"baseline_{log_dir}", config={
+    wandb.init(project="mcp_atari_final", name=f"baseline_{log_dir}", config={
         "total_timesteps": total_timesteps
     })
         
@@ -347,85 +328,89 @@ def train_baseline_ppo(env, eval_env, total_timesteps, log_dir, game_config):
 def run_experiment(args):
     results = {}
     game_config = get_game_config(args.game_name)
-
-    # Create a timestamp
+    
+    # Create timestamp and log directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Create the log directory with game name, number of primitives, and timestamp
     log_dir = f"logs/{args.game_name}_primitives{args.num_primitives}_{timestamp}"
     os.makedirs(log_dir, exist_ok=True)
 
-    env = create_pacman_env(args.subset_actions)
-    eval_env = create_pacman_env(args.subset_actions)
+    # Set seeds for reproducibility
+    if args.seed is not None:
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+    
+    # Create environments for pre-training task
+    env = create_atari_env(args.game_name, args.seed)
+    eval_env = create_atari_env(args.game_name, args.seed)
 
     try:
-        print("Training MCP on subset of actions...")
-        mcp_subset_model, results["mcp_subset"] = train_mcp_atari_results_subset(
-            env, eval_env, args.subset_actions, args.mcp_subset_timesteps, 
-            f"{log_dir}/mcp_subset", game_config, args.num_primitives, 
+        print(f"Pre-training MCP on {args.game_name}...")
+        mcp_model, results["pre_training"] = train_mcp_pre_training(
+            env, eval_env, args.pre_training_timesteps, 
+            f"{log_dir}/pre_training", game_config, args.num_primitives, 
             args.features_dim, args.pre_training_lr
         )
-        print("MCP Subset Results:", results["mcp_subset"])
-        wandb.finish() 
+        print("Pre-training Results:", results["pre_training"])
+        wandb.finish()
     except Exception as e:
-        print(f"Error in MCP subset training: {e}")
+        print(f"Error in pre-training: {e}")
         print(traceback.format_exc())
-        wandb.finish()   
+        wandb.finish()
 
-    env = create_pacman_env()
-    eval_env = create_pacman_env()
+    # Create environments for transfer task
+    transfer_env = create_atari_env(args.transfer_game_name, args.seed)
+    transfer_eval_env = create_atari_env(args.transfer_game_name, args.seed)
 
     try:
-        print("Performing transfer learning to full action space...")
-        mcp_full_model, results["mcp_full"] = transfer_learning_full_actions(
-            env, eval_env, f"{log_dir}/mcp_subset/final_model", 
-            args.mcp_full_timesteps, f"{log_dir}/mcp_full", game_config, 
+        print(f"Performing transfer learning to {args.transfer_game_name}...")
+        transfer_model, results["transfer"] = transfer_learning_new_task(
+            transfer_env, transfer_eval_env, 
+            f"{log_dir}/pre_training/final_model",
+            args.transfer_timesteps, f"{log_dir}/transfer", 
+            get_game_config(args.transfer_game_name),
             args.num_primitives, args.features_dim,
             args.transfer_learning_lr
         )
-        print("MCP Full Results:", results["mcp_full"])
-        wandb.finish() 
+        print("Transfer Results:", results["transfer"])
+        wandb.finish()
     except Exception as e:
-        print(f"Error in MCP full action space training: {e}")
-        print(traceback.format_exc())  
-        wandb.finish() 
+        print(f"Error in transfer learning: {e}")
+        print(traceback.format_exc())
+        wandb.finish()
 
     try:
         print("Training baseline PPO...")
         baseline_model, results["baseline_ppo"] = train_baseline_ppo(
-            env, eval_env, args.baseline_ppo_timesteps, 
-            f"{log_dir}/baseline_ppo", game_config
+            transfer_env, transfer_eval_env, 
+            args.baseline_timesteps, f"{log_dir}/baseline_ppo", 
+            get_game_config(args.transfer_game_name)
         )
         print("Baseline PPO Results:", results["baseline_ppo"])
-        wandb.finish() 
+        wandb.finish()
     except Exception as e:
         print(f"Error in baseline PPO training: {e}")
         print(traceback.format_exc())
-        wandb.finish() 
+        wandb.finish()
 
-    # Save results to a JSON file
+    # Save results
     with open(f"{log_dir}/experiment_results.json", "w") as f:
         json.dump(results, f, indent=4, cls=NumpyEncoder)
-        
-    # Plot and log action distribution comparison
-    action_dist_fig = plot_action_distributions(results["mcp_subset"]["action_distribution"], results["mcp_full"]["action_distribution"])
-    wandb.log({"action_distribution_comparison": wandb.Image(action_dist_fig)})
-    plt.close(action_dist_fig)
 
     print(f"Experiment completed. Results saved to {log_dir}/experiment_results.json")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run MCP experiments on Atari games")
     parser.add_argument("--game_name", type=str, default="MsPacman", help="Name of the Atari game")
+    parser.add_argument("--transfer_game_name", type=str, default="MsPacman", help="Name of the Atari game")
     parser.add_argument("--subset_actions", type=int, nargs="+", default=[0, 1, 2, 3, 4, 5, 6, 7, 8], help="Subset of actions for initial training")
-    parser.add_argument("--mcp_subset_timesteps", type=int, default=1000000, help="Total timesteps for MCP subset training")
-    parser.add_argument("--mcp_full_timesteps", type=int, default=500000, help="Total timesteps for MCP full action space training")
-    parser.add_argument("--baseline_ppo_timesteps", type=int, default=1000000, help="Total timesteps for baseline PPO training")
+    parser.add_argument("--pre_training_timesteps", type=int, default=100000, help="Total timesteps for MCP subset training")
+    parser.add_argument("--transfer_timesteps", type=int, default=50000, help="Total timesteps for MCP full action space training")
+    parser.add_argument("--baseline_timesteps", type=int, default=100000, help="Total timesteps for baseline PPO training")
     parser.add_argument("--num_primitives", type=int, default=8, help="Number of primitives in the MCP model")
     parser.add_argument("--pre_training_lr", type=float, default=3e-3, help="Learning rate for pre-training")
     parser.add_argument("--transfer_learning_lr", type=float, default=1e-4, help="Learning rate for transfer learning")
     parser.add_argument("--features_dim", type=int, default=512, help="Dimension of the feature extractor output")
-    parser.add_argument("--primitive_action_dim", type=int, default=3, help="Dimension of primitive actions")
+    parser.add_argument("--primitive_action_dim", type=int, default=4, help="Dimension of primitive actions")
     parser.add_argument("--eval_freq", type=int, default=10000, help="Frequency of evaluation during training")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
 
